@@ -23,6 +23,7 @@ SOFTWARE.
 package palreplacer;
 
 import java.awt.image.BufferedImage;
+
 import java.awt.image.ColorModel;
 import java.awt.image.IndexColorModel;
 import java.io.BufferedReader;
@@ -37,6 +38,8 @@ import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static java.lang.Math.abs;
+
 import javax.swing.AbstractButton;
 import javax.swing.JComponent;
 import javax.swing.JMenuItem;
@@ -44,6 +47,9 @@ import javax.swing.KeyStroke;
 import javax.swing.filechooser.FileFilter;
 
 public class Util {
+	// standard color weights for color error estimation
+	public static int [] std_error_weights = { 30, 59, 11 };
+
 	public static String getExt(String filename) {
 		int idx = filename.lastIndexOf('.');
 		if(idx<=0)
@@ -320,5 +326,37 @@ public class Util {
 	public static <C extends JComponent> C setToolTip(C c, String text) {
 		c.setToolTipText(text);
 		return c;
+	}
+	
+	public static int colorError(int c1, int c2) {
+		int r1 = (c1 >> 16)&0xFF; 
+		int g1 = (c1 >>  8)&0xFF; 
+		int b1 = (c1 >>  0)&0xFF; 
+
+		int r2 = (c2 >> 16)&0xFF; 
+		int g2 = (c2 >>  8)&0xFF; 
+		int b2 = (c2 >>  0)&0xFF;
+		
+		return abs(r1 - r2) * std_error_weights[0] + abs(g1 - g2) * std_error_weights[1] + abs(b1 - b2) * std_error_weights[2];
+	}
+	
+	public static int getBestColorIndex(int [] rgb, int firstTry, int c) {
+		if(firstTry > -1 && firstTry < rgb.length) {
+			if( (rgb[firstTry]&0xFFFFFF) == (c&0xFFFFFF) )
+				return firstTry;
+		}
+		
+		int bestIndex = 0;
+		int bestError = colorError(rgb[bestIndex], c);
+		
+		for(int i=1; i<rgb.length; i++) {
+			int e = colorError(rgb[i], c);
+			if(e < bestError) {
+				bestIndex = i;
+				bestError = e;
+			}
+		}
+				
+		return bestIndex;
 	}
 }

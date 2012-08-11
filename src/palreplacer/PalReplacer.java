@@ -32,6 +32,7 @@ import static palreplacer.Util.getImagePaletteData;
 import static palreplacer.Util.getNameNoExt;
 import static palreplacer.Util.getRawPaletteData;
 import static palreplacer.Util.setACAndText;
+import static palreplacer.Util.setToolTip;
 import static palreplacer.Util.withKeyStroke;
 
 import java.awt.BorderLayout;
@@ -54,6 +55,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
+import java.awt.image.ColorModel;
 import java.awt.image.DataBuffer;
 import java.awt.image.IndexColorModel;
 import java.beans.PropertyChangeEvent;
@@ -119,6 +121,8 @@ public class PalReplacer implements Runnable {
 	private JRadioButton rbOverwriteNo;
 	private JRadioButton rbOverwriteAsk;
 	private JRadioButton rbOverwriteYes;
+
+	private JCheckBox cbNoDithering;
 	
 	public static final String acLoadPalette = "loadpalette";
 	public static final String acSavePalette = "savepalette";
@@ -332,14 +336,16 @@ public class PalReplacer implements Runnable {
 			boolean neverOverwrite = rbOverwriteNo.isSelected();
 			boolean overwriteAsk = rbOverwriteAsk.isSelected();
 			
+			boolean noDither = cbNoDithering.isSelected();
+			
 			synchronized(lm) {
 				int [] rgbdata = paldisp.getEntries();
 				int bits = (int)Math.ceil( Math.log(rgbdata.length) / Math.log(2) );
 				int type = bits > 8 ? DataBuffer.TYPE_USHORT : DataBuffer.TYPE_BYTE;
 				IndexColorModel icm = new IndexColorModel(bits, rgbdata.length, rgbdata, 0, paldisp.hasAlpha(), -1, type);
 				int size = lm.getSize();
-				for(int i=0; i<size; i++) {
-					String s = (String)lm.get(i);
+				for(int file_index=0; file_index<size; file_index++) {
+					String s = (String)lm.get(file_index);
 					File f = new File(s);
 					
 					try {
@@ -383,9 +389,44 @@ public class PalReplacer implements Runnable {
 							BufferedImage bi = ImageIO.read(f);
 							if(bi!=null) {
 								BufferedImage target = new BufferedImage(bi.getWidth(), bi.getHeight(), BufferedImage.TYPE_BYTE_INDEXED, icm);
-								Graphics2D g2d = target.createGraphics();
-								g2d.drawImage(bi, null, 0, 0);
-
+								
+								if(noDither) {
+									ColorModel cm = bi.getColorModel();
+									int w = bi.getWidth();
+									int h = bi.getHeight();
+									
+									if(bi.getType() == BufferedImage.TYPE_BYTE_INDEXED && cm instanceof IndexColorModel) {
+										// converting byte index
+										IndexColorModel bi_icm = (IndexColorModel)cm;
+										
+										byte [] indices = (byte [])bi.getRaster().getDataElements(0, 0, w, h, null);
+										
+										for(int i=0; i<indices.length; i++) {
+											int bi_color = bi_icm.getRGB(indices[i]);
+											int best_index = Util.getBestColorIndex(rgbdata, indices[i], bi_color);
+											indices[i] = (byte)best_index;
+										}
+										
+										target.getRaster().setDataElements(0, 0, w, h, indices);																				
+									} else {
+										// converting by rgb
+										int [] rgb_line = new int [w];
+										byte [] indices = new byte [w];
+										
+										for(int j=0; j<h; j++) {
+											bi.getRGB(0, j, w, 1, rgb_line, 0, w);
+											
+											for(int i=0; i<w; i++) {
+												indices[i] = (byte)Util.getBestColorIndex(rgbdata, -1, rgb_line[i]);
+											}
+											
+											target.getRaster().setDataElements(0, j, w, 1, indices);
+										}
+									}
+								} else {
+									Graphics2D g2d = target.createGraphics();
+									g2d.drawImage(bi, null, 0, 0);
+								}
 
 								String outExt = getExt(out);
 								if(outExt.length() == 0)
@@ -404,7 +445,7 @@ public class PalReplacer implements Runnable {
 						hadErrors = true;
 					}
 					
-					progress.setValue(i);
+					progress.setValue(file_index);
 				}
 			}
 			
@@ -642,6 +683,7 @@ public class PalReplacer implements Runnable {
 		paletteBtnPanel.setBorder(BorderFactory.createTitledBorder("Palette-Ops"));
 		paletteBtnPanel.add(setACAndText(new JButton(fileAction), acLoadPalette, "Load..."));
 		paletteBtnPanel.add(setACAndText(new JButton(fileAction), acSavePalette, "Save..."));
+		paletteBtnPanel.add(setToolTip(cbNoDithering = new JCheckBox("no dithering", true), "process each pixel individually"));
 		
 		gbc.gridx = 0;
 		gbc.gridy = 1;
@@ -745,7 +787,7 @@ public class PalReplacer implements Runnable {
 		gbc.anchor = GridBagConstraints.LINE_END;
 		
 		gbl.setConstraints(selectOutDirButton, gbc);
-		outoptsPanel.add(Util.setToolTip(setACAndText(selectOutDirButton, acSelectOutdir, "Choose"), "Choose directory for file output"));
+		outoptsPanel.add(setToolTip(setACAndText(selectOutDirButton, acSelectOutdir, "Choose"), "Choose directory for file output"));
 
 		// output format
 		JLabel outFormatLabel = new JLabel("Output Format:");
