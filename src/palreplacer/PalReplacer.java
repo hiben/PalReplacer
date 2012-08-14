@@ -68,6 +68,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.util.List;
 
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
@@ -314,7 +315,7 @@ public class PalReplacer implements Runnable {
 			d.setVisible(true);
 		}
 	}
-
+	
 	// this thread handles the actual file conversion
 	// on start, it sets the cancel-dialog visible and blocks the application UI
 	private class ConversionThread extends Thread {
@@ -398,13 +399,22 @@ public class PalReplacer implements Runnable {
 									if(bi.getType() == BufferedImage.TYPE_BYTE_INDEXED && cm instanceof IndexColorModel) {
 										// converting byte index
 										IndexColorModel bi_icm = (IndexColorModel)cm;
+										int isize = bi_icm.getMapSize();
+										int [] bi_rgb = new int [isize];
+										bi_icm.getRGBs(bi_rgb);
+										
+										byte [] index_map = new byte [isize];
+										
+										// first get best match for used colors
+										for(int ci=0; ci<isize; ci++) {
+											index_map[ci] = (byte)Util.getBestColorIndex(rgbdata, ci, bi_rgb[ci]);
+										}
 										
 										byte [] indices = (byte [])bi.getRaster().getDataElements(0, 0, w, h, null);
 										
+										// now simply map indices
 										for(int i=0; i<indices.length; i++) {
-											int bi_color = bi_icm.getRGB(indices[i]);
-											int best_index = Util.getBestColorIndex(rgbdata, indices[i], bi_color);
-											indices[i] = (byte)best_index;
+											indices[i] = index_map[((int)indices[i])&0xFF];
 										}
 										
 										target.getRaster().setDataElements(0, 0, w, h, indices);																				
@@ -413,11 +423,14 @@ public class PalReplacer implements Runnable {
 										int [] rgb_line = new int [w];
 										byte [] indices = new byte [w];
 										
+										// caching colors makes no sense
+										// I tried and it was slower (overhead)
 										for(int j=0; j<h; j++) {
 											bi.getRGB(0, j, w, 1, rgb_line, 0, w);
 											
 											for(int i=0; i<w; i++) {
-												indices[i] = (byte)Util.getBestColorIndex(rgbdata, -1, rgb_line[i]);
+												int target_color = rgb_line[i];
+												indices[i] = (byte)Util.getBestColorIndex(rgbdata, -1, target_color);
 											}
 											
 											target.getRaster().setDataElements(0, j, w, 1, indices);
@@ -579,45 +592,60 @@ public class PalReplacer implements Runnable {
 		@Override
 		public synchronized void drop(DropTargetDropEvent dtde) {
 			try {
-				DataFlavor df = null;
-				
-				for(DataFlavor adf : dtde.getCurrentDataFlavors()) {
-					if(adf.getPrimaryType().toLowerCase().equals("text") && adf.getSubType().toLowerCase().equals("uri-list") && adf.getDefaultRepresentationClassAsString().equals("java.io.InputStream")) {
-						df = adf;
-						break;
-					}
-				}
-				
-				if(df==null)
-					df = new DataFlavor("text/uri-list;class=java.io.InputStream");
-				
-				if(dtde.isDataFlavorSupported(df)) {
+				if(dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
 					dtde.acceptDrop(DnDConstants.ACTION_COPY);
-					
-					Transferable t = dtde.getTransferable();
-					Object o = t.getTransferData(df);
-					
-					Reader r = null;
-					if(o instanceof Reader) {
-						r = (Reader)o;
-					}
-					if(o instanceof InputStream) {
-						r = new InputStreamReader((InputStream)o);
-					}
-					
-					if(r!=null) {
-						BufferedReader br = new BufferedReader(r);
-						
-						String line;
-						while((line = br.readLine())!=null) {
-							if(!lm.contains(line))
-									lm.addElement(line);
+
+					List<?> fileList = (List<?>)dtde.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
+
+					for(Object o : fileList) {
+						if(o instanceof File) {
+							File f = (File)o;
+							String filePath = f.getCanonicalPath();
+							if(!lm.contains(filePath)) {
+								lm.addElement(filePath);
+							}
 						}
-					} else {
 					}
+
 				} else {
+
+					DataFlavor df = null;
+
+					for(DataFlavor adf : dtde.getCurrentDataFlavors()) {
+						if(adf.getPrimaryType().toLowerCase().equals("text") && adf.getSubType().toLowerCase().equals("uri-list") && adf.getDefaultRepresentationClassAsString().equals("java.io.InputStream")) {
+							df = adf;
+							break;
+						}
+					}
+
+					if(df==null)
+						df = new DataFlavor("text/uri-list;class=java.io.InputStream");
+
+					if(dtde.isDataFlavorSupported(df)) {
+						dtde.acceptDrop(DnDConstants.ACTION_COPY);
+
+						Transferable t = dtde.getTransferable();
+						Object o = t.getTransferData(df);
+
+						Reader r = null;
+						if(o instanceof Reader) {
+							r = (Reader)o;
+						}
+						if(o instanceof InputStream) {
+							r = new InputStreamReader((InputStream)o);
+						}
+
+						if(r!=null) {
+							BufferedReader br = new BufferedReader(r);
+
+							String line;
+							while((line = br.readLine())!=null) {
+								if(!lm.contains(line))
+									lm.addElement(line);
+							}
+						}
+					}
 				}
-				
 			} catch (ClassNotFoundException e) {
 				e.printStackTrace();
 			} catch (UnsupportedFlavorException e) {
